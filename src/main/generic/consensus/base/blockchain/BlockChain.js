@@ -141,10 +141,11 @@ class BlockChain {
     }
 
     /**
+     * @param {Hash} [hash]
      * @returns {boolean}
      */
-    isAnchored() {
-        return Block.GENESIS.HASH.equals(this.tail.hash());
+    isAnchored(hash = Block.GENESIS.HASH) {
+        return hash.equals(this.tail.hash());
     }
 
     /**
