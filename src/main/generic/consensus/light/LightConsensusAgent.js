@@ -211,6 +211,9 @@ class LightConsensusAgent extends FullConsensusAgent {
         this._peer.channel.getChainProof();
         this._requestedChainProof = true;
 
+        //const locators = await this._blockchain.getBlockLocators();
+        //this._peer.channel.getChainProof(locators);
+
         // Drop the peer if it doesn't send the chain proof within the timeout.
         // TODO should we ban here instead?
         this._peer.channel.expectMessage(Message.Type.CHAIN_PROOF, () => {

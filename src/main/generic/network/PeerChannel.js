@@ -278,10 +278,11 @@ class PeerChannel extends Observable {
     }
 
     /**
+     * @param {Array.<Hash>} [locators]
      * @return {boolean}
      */
-    getChainProof() {
-        return this._send(new GetChainProofMessage());
+    getChainProof(locators = null) {
+        return this._send(new GetChainProofMessage(locators));
     }
 
     /**
