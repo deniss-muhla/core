@@ -21,7 +21,7 @@ class Miner extends Observable {
         /** @type {Time} */
         this._time = time;
         /** @type {Address} */
-        this._address = minerAddress;
+        this._blockHash = minerAddress;
         /** @type {Uint8Array} */
         this._extraData = extraData;
 
@@ -328,7 +328,7 @@ class Miner extends Observable {
 
     /** @type {Address} */
     get address() {
-        return this._address;
+        return this._blockHash;
     }
 
     /** @type {boolean} */
