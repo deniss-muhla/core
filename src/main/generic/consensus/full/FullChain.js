@@ -82,7 +82,7 @@ class FullChain extends BaseChain {
             this._transactionCache.prependBlocks([...blocks.reverse(), this._mainChain.head]);
         } else {
             // Initialize chain & accounts with Genesis block.
-            this._mainChain = new ChainData(Block.GENESIS, Block.GENESIS.difficulty, BlockUtils.realDifficulty(await Block.GENESIS.pow()), true);
+            this._mainChain = await ChainData.initial(Block.GENESIS);
             this._headHash = Block.GENESIS.HASH;
 
             const tx = this._store.transaction();
@@ -167,9 +167,7 @@ class FullChain extends BaseChain {
         }
 
         // Block looks good, create ChainData.
-        const totalDifficulty = prevData.totalDifficulty + block.difficulty;
-        const totalWork = prevData.totalWork + BlockUtils.realDifficulty(await block.pow());
-        const chainData = new ChainData(block, totalDifficulty, totalWork);
+        const chainData = await prevData.nextChainData(block);
 
         // Check if the block extends our current main chain.
         if (block.prevHash.equals(this.headHash)) {
@@ -183,7 +181,7 @@ class FullChain extends BaseChain {
         }
 
         // Otherwise, check if the new chain is harder than our current main chain.
-        if (totalDifficulty > this.totalDifficulty) {
+        if (chainData.totalDifficulty > this.totalDifficulty) {
             // A fork has become the hardest chain, rebranch to it.
             if (!(await this._rebranch(hash, chainData))) {
                 this._blockInvalidCount++;
