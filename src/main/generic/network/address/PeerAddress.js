@@ -200,6 +200,30 @@ class PeerAddress {
     isSeed() {
         return this._timestamp === 0;
     }
+
+    /**
+     * @returns {boolean}
+     */
+    exceedsAge() {
+        // Seed addresses are never too old.
+        if (this.isSeed()) {
+            return false;
+        }
+
+        const age = Date.now() - this.timestamp;
+        switch (this.protocol) {
+            case Protocol.WS:
+                return age > PeerAddressBook.MAX_AGE_WEBSOCKET;
+
+            case Protocol.RTC:
+                return age > PeerAddressBook.MAX_AGE_WEBRTC;
+
+            case Protocol.DUMB:
+                return age > PeerAddressBook.MAX_AGE_DUMB;
+        }
+        return false;
+    }
+
 }
 
 Class.register(PeerAddress);
@@ -272,6 +296,13 @@ class WsPeerAddress extends PeerAddress {
         buf.writeVarLengthString(this._host);
         buf.writeUint16(this._port);
         return buf;
+    }
+
+    /**
+     * @returns {boolean}
+     */
+    globallyReachable() {
+        return NetUtils.hostGloballyReachable(this.host);
     }
 
     /** @type {number} */

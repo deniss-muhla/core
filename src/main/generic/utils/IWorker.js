@@ -7,7 +7,7 @@ class IWorker {
     }
 
     static async startWorkerForProxy(clazz, name, workerScript) {
-        if (typeof Worker === 'undefined') {
+        if (!IWorker._workersSupported) {
             await IWorker._workerImplementation[clazz.name].init(name);
             return IWorker._workerImplementation[clazz.name];
         } else {
@@ -39,8 +39,12 @@ class IWorker {
         }
     }
 
-    static get areWorkersAsync() {
+    static get _workersSupported() {
         return typeof Worker !== 'undefined';
+    }
+
+    static get areWorkersAsync() {
+        return IWorker._workersSupported;
     }
 
     static get _insideWebWorker() {
@@ -58,13 +62,6 @@ class IWorker {
         }
         IWorker._workerImplementation = IWorker._workerImplementation || {};
         IWorker._workerImplementation[baseClazz.name] = impl;
-    }
-
-    static fireModuleLoaded(module = 'Module') {
-        if (typeof IWorker._moduleLoadedCallbacks[module] === 'function') {
-            IWorker._moduleLoadedCallbacks[module]();
-            IWorker._moduleLoadedCallbacks[module] = null;
-        }
     }
 
     static _loadBrowserScript(url, resolve) {
@@ -114,23 +111,6 @@ class IWorker {
                         cb.error(msg.data.result);
                     }
                 }
-            }
-
-            /**
-             * @param {string} script
-             * @returns {Promise.<boolean>}
-             */
-            importScript(script) {
-                return this._invoke('importScript', [script]);
-            }
-
-            /**
-             * @param {string} wasm
-             * @param {string} module
-             * @returns {Promise.<boolean>}
-             */
-            importWasm(wasm, module = 'Module') {
-                return this._invoke('importWasm', [wasm, module]);
             }
 
             /**
@@ -185,105 +165,8 @@ class IWorker {
                         this._result(msg, 'OK', res);
                     }
                 } catch (e) {
-                    this._result(msg, 'error', e);
+                    this._result(msg, 'error', e.message || e);
                 }
-            }
-
-            importScript(script, module = 'Module') {
-                if (module && IWorker._global[module] && IWorker._global[module].asm) return false;
-                if (typeof Nimiq !== 'undefined' && Nimiq._path) script = `${Nimiq._path}${script}`;
-                if (typeof __dirname === 'string' && script.indexOf('/') === -1) script = `${__dirname}/${script}`;
-
-                const moduleSettings = IWorker._global[module] || {};
-                return new Promise(async (resolve, reject) => {
-                    if (module) {
-                        switch (typeof moduleSettings.preRun) {
-                            case 'undefined':
-                                moduleSettings.preRun = () => resolve(true);
-                                break;
-                            case 'function':
-                                moduleSettings.preRun = [moduleSettings, () => resolve(true)];
-                                break;
-                            case 'object':
-                                moduleSettings.preRun.push(() => resolve(true));
-                        }
-                    }
-                    if (typeof importScripts === 'function') {
-                        await new Promise((resolve) => {
-                            IWorker._moduleLoadedCallbacks[module] = resolve;
-                            importScripts(script);
-                        });
-                        IWorker._global[module] = IWorker._global[module](moduleSettings);
-                        if (!module) resolve(true);
-                    } else if (typeof window === 'object') {
-                        await new Promise((resolve) => {
-                            IWorker._loadBrowserScript(script, resolve);
-                        });
-                        IWorker._global[module] = IWorker._global[module](moduleSettings);
-                        if (!module) resolve(true);
-                    } else if (typeof require === 'function') {
-                        IWorker._global[module] = require(script)(moduleSettings);
-                        if (!module) resolve(true);
-                    } else {
-                        reject('No way to load scripts.');
-                    }
-                });
-            }
-
-            /**
-             * @param {string} wasm
-             * @param {string} module
-             * @returns {Promise.<boolean>}
-             */
-            importWasm(wasm, module = 'Module') {
-                if (typeof Nimiq !== 'undefined' && Nimiq._path) wasm = `${Nimiq._path}${wasm}`;
-                if (typeof __dirname === 'string' && wasm.indexOf('/') === -1) wasm = `${__dirname}/${wasm}`;
-                if (!IWorker._global.WebAssembly) {
-                    Log.w(IWorker, 'No support for WebAssembly available.');
-                    return Promise.resolve(false);
-                }
-
-                return new Promise((resolve) => {
-                    try {
-                        if (PlatformUtils.isNodeJs()) {
-                            const toUint8Array = function (buf) {
-                                const u = new Uint8Array(buf.length);
-                                for (let i = 0; i < buf.length; ++i) {
-                                    u[i] = buf[i];
-                                }
-                                return u;
-                            };
-                            const fs = require('fs');
-                            fs.readFile(wasm, (err, data) => {
-                                if (err) {
-                                    Log.w(IWorker, `Failed to access WebAssembly module ${wasm}: ${err}`);
-                                    resolve(false);
-                                } else {
-                                    IWorker._global[module] = IWorker._global[module] || {};
-                                    IWorker._global[module].wasmBinary = toUint8Array(data);
-                                    resolve(true);
-                                }
-                            });
-                        } else {
-                            const xhr = new XMLHttpRequest();
-                            xhr.open('GET', wasm, true);
-                            xhr.responseType = 'arraybuffer';
-                            xhr.onload = function () {
-                                IWorker._global[module] = IWorker._global[module] || {};
-                                IWorker._global[module].wasmBinary = xhr.response;
-                                resolve(true);
-                            };
-                            xhr.onerror = function () {
-                                Log.w(IWorker, `Failed to access WebAssembly module ${wasm}`);
-                                resolve(false);
-                            };
-                            xhr.send(null);
-                        }
-                    } catch (e) {
-                        Log.w(IWorker, `Failed to access WebAssembly module ${wasm}`);
-                        resolve(false);
-                    }
-                });
             }
 
             init(name) {
@@ -364,13 +247,17 @@ class IWorker {
              * @returns {Promise}
              */
             _invoke(name, args) {
-                return new Promise((resolve, error) => {
-                    this._waitingCalls.push({name, args, resolve, error});
-                    const worker = this._freeWorkers.shift();
-                    if (worker) {
-                        this._step(worker).catch(Log.w.tag(IWorker));
-                    }
-                });
+                if (IWorker._workersSupported) {
+                    return new Promise((resolve, error) => {
+                        this._waitingCalls.push({name, args, resolve, error});
+                        const worker = this._freeWorkers.shift();
+                        if (worker) {
+                            this._step(worker).catch(Log.w.tag(IWorker));
+                        }
+                    });
+                } else {
+                    return this._workers[0][name].apply(this._workers[0], args);
+                }
             }
 
             /**

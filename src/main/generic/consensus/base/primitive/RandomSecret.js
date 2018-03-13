@@ -1,10 +1,13 @@
-class RandomSecret extends Primitive {
+class RandomSecret extends Serializable {
     /**
-     * @param arg
+     * @param {Uint8Array} arg
      * @private
      */
     constructor(arg) {
-        super(arg, Crypto.randomSecretType, Crypto.randomSecretSize);
+        super();
+        if (!(arg instanceof Uint8Array)) throw new Error('Primitive: Invalid type');
+        if (arg.length !== RandomSecret.SIZE) throw new Error('Primitive: Invalid length');
+        this._obj = arg;
     }
 
     /**
@@ -12,7 +15,7 @@ class RandomSecret extends Primitive {
      * @return {RandomSecret}
      */
     static unserialize(buf) {
-        return new RandomSecret(Crypto.randomSecretUnserialize(buf.read(Crypto.randomSecretSize)));
+        return new RandomSecret(buf.read(RandomSecret.SIZE));
     }
 
     /**
@@ -21,22 +24,24 @@ class RandomSecret extends Primitive {
      */
     serialize(buf) {
         buf = buf || new SerialBuffer(this.serializedSize);
-        buf.write(Crypto.randomSecretSerialize(this._obj));
+        buf.write(this._obj);
         return buf;
     }
 
     /** @type {number} */
     get serializedSize() {
-        return Crypto.randomSecretSize;
+        return RandomSecret.SIZE;
     }
 
     /**
-     * @param {Primitive} o
+     * @param {Serializable} o
      * @return {boolean}
      */
     equals(o) {
         return o instanceof RandomSecret && super.equals(o);
     }
 }
+
+RandomSecret.SIZE = 32;
 
 Class.register(RandomSecret);

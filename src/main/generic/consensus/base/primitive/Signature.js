@@ -1,4 +1,4 @@
-class Signature extends Primitive {
+class Signature extends Serializable {
     /**
      * @param {Signature} o
      * @returns {Signature}
@@ -11,11 +11,14 @@ class Signature extends Primitive {
     }
 
     /**
-     * @param arg
+     * @param {Uint8Array} arg
      * @private
      */
     constructor(arg) {
-        super(arg, Crypto.signatureType, Crypto.signatureSize);
+        super();
+        if (!(arg instanceof Uint8Array)) throw new Error('Primitive: Invalid type');
+        if (arg.length !== Signature.SIZE) throw new Error('Primitive: Invalid length');
+        this._obj = arg;
     }
 
     /**
@@ -25,7 +28,7 @@ class Signature extends Primitive {
      * @return {Signature}
      */
     static create(privateKey, publicKey, data) {
-        return new Signature(Crypto.signatureCreate(privateKey._obj, publicKey._obj, data));
+        return new Signature(Signature._signatureCreate(privateKey._obj, publicKey._obj, data));
     }
 
     /**
@@ -34,7 +37,8 @@ class Signature extends Primitive {
      * @return {Signature}
      */
     static fromPartialSignatures(commitment, signatures) {
-        return new Signature(Crypto.combinePartialSignatures(commitment._obj, signatures.map(s => s._obj)));
+        const raw = Signature._combinePartialSignatures(commitment.serialize(), signatures.map(s => s.serialize()));
+        return new Signature(raw);
     }
 
     /**
@@ -42,7 +46,7 @@ class Signature extends Primitive {
      * @return {Signature}
      */
     static unserialize(buf) {
-        return new Signature(Crypto.signatureUnserialize(buf.read(Crypto.signatureSize)));
+        return new Signature(buf.read(Signature.SIZE));
     }
 
     /**
@@ -51,13 +55,13 @@ class Signature extends Primitive {
      */
     serialize(buf) {
         buf = buf || new SerialBuffer(this.serializedSize);
-        buf.write(Crypto.signatureSerialize(this._obj));
+        buf.write(this._obj);
         return buf;
     }
 
     /** @type {number} */
     get serializedSize() {
-        return Crypto.signatureSize;
+        return Signature.SIZE;
     }
 
     /**
@@ -66,15 +70,127 @@ class Signature extends Primitive {
      * @return {boolean}
      */
     verify(publicKey, data) {
-        return Crypto.signatureVerify(publicKey._obj, data, this._obj);
+        return Signature._signatureVerify(publicKey._obj, data, this._obj);
     }
 
     /**
-     * @param {Primitive} o
+     * @param {Serializable} o
      * @return {boolean}
      */
     equals(o) {
         return o instanceof Signature && super.equals(o);
     }
+
+    /**
+     * @param {Uint8Array} combinedCommitment
+     * @param {Array.<Uint8Array>} partialSignatures
+     * @returns {Uint8Array}
+     */
+    static _combinePartialSignatures(combinedCommitment, partialSignatures) {
+        const combinedSignature = Signature._aggregatePartialSignatures(partialSignatures);
+        return BufferUtils.concatTypedArrays(combinedCommitment, combinedSignature);
+    }
+
+    /**
+     * @param {Array.<Uint8Array>} partialSignatures
+     * @returns {Uint8Array}
+     */
+    static _aggregatePartialSignatures(partialSignatures) {
+        return partialSignatures.reduce((sigA, sigB) => Signature._scalarsAdd(sigA, sigB));
+    }
+
+    /**
+     * @param {Uint8Array} a
+     * @param {Uint8Array} b
+     * @returns {Uint8Array}
+     */
+    static _scalarsAdd(a, b) {
+        if (a.byteLength !== PartialSignature.SIZE || b.byteLength !== PartialSignature.SIZE) {
+            throw Error('Wrong buffer size.');
+        }
+        let stackPtr;
+        try {
+            stackPtr = Module.stackSave();
+            const wasmOutSum = Module.stackAlloc(PartialSignature.SIZE);
+            const wasmInA = Module.stackAlloc(a.length);
+            const wasmInB = Module.stackAlloc(b.length);
+            new Uint8Array(Module.HEAPU8.buffer, wasmInA, a.length).set(a);
+            new Uint8Array(Module.HEAPU8.buffer, wasmInB, b.length).set(b);
+            Module._ed25519_add_scalars(wasmOutSum, wasmInA, wasmInB);
+            const sum = new Uint8Array(PartialSignature.SIZE);
+            sum.set(new Uint8Array(Module.HEAPU8.buffer, wasmOutSum, PartialSignature.SIZE));
+            return sum;
+        } catch (e) {
+            Log.w(Signature, e);
+            throw e;
+        } finally {
+            if (stackPtr !== undefined) Module.stackRestore(stackPtr);
+        }
+    }
+
+    /**
+     * @param {Uint8Array} privateKey
+     * @param {Uint8Array} publicKey
+     * @param {Uint8Array} message
+     * @returns {Uint8Array}
+     */
+    static _signatureCreate(privateKey, publicKey, message) {
+        if (publicKey.byteLength !== PublicKey.SIZE
+            || privateKey.byteLength !== PrivateKey.SIZE) {
+            throw Error('Wrong buffer size.');
+        }
+        let stackPtr;
+        try {
+            const wasmOutSignature = Module.stackAlloc(Signature.SIZE);
+            const signatureBuffer = new Uint8Array(Module.HEAP8.buffer, wasmOutSignature, Signature.SIZE);
+            const wasmInMessage = Module.stackAlloc(message.length);
+            new Uint8Array(Module.HEAP8.buffer, wasmInMessage, message.length).set(message);
+            const wasmInPubKey = Module.stackAlloc(publicKey.length);
+            new Uint8Array(Module.HEAP8.buffer, wasmInPubKey, publicKey.length).set(publicKey);
+            const wasmInPrivKey = Module.stackAlloc(privateKey.length);
+            const privKeyBuffer = new Uint8Array(Module.HEAP8.buffer, wasmInPrivKey, privateKey.length);
+            privKeyBuffer.set(privateKey);
+
+            Module._ed25519_sign(wasmOutSignature, wasmInMessage, message.byteLength, wasmInPubKey, wasmInPrivKey);
+            privKeyBuffer.fill(0);
+
+            const signature = new Uint8Array(Signature.SIZE);
+            signature.set(signatureBuffer);
+            return signature;
+        } catch (e) {
+            Log.w(Signature, e);
+            throw e;
+        } finally {
+            if (stackPtr !== undefined) Module.stackRestore(stackPtr);
+        }
+    }
+
+    /**
+     * @param {Uint8Array} publicKey
+     * @param {Uint8Array} message
+     * @param {Uint8Array} signature
+     * @returns {boolean}
+     */
+    static _signatureVerify(publicKey, message, signature) {
+        let stackPtr;
+        try {
+            const wasmInPubKey = Module.stackAlloc(publicKey.length);
+            new Uint8Array(Module.HEAP8.buffer, wasmInPubKey, publicKey.length).set(publicKey);
+            const wasmInMessage = Module.stackAlloc(message.length);
+            new Uint8Array(Module.HEAP8.buffer, wasmInMessage, message.length).set(message);
+            const wasmInSignature = Module.stackAlloc(signature.length);
+            new Uint8Array(Module.HEAP8.buffer, wasmInSignature, signature.length).set(signature);
+
+            return !!Module._ed25519_verify(wasmInSignature, wasmInMessage, message.byteLength, wasmInPubKey);
+        } catch (e) {
+            Log.w(Signature, e);
+            throw e;
+        } finally {
+            if (stackPtr !== undefined) Module.stackRestore(stackPtr);
+        }
+    }
 }
+
+Signature.SIZE = 64;
+
 Class.register(Signature);

@@ -1,11 +1,5 @@
 describe('Miner', () => {
 
-    beforeAll((done) => {
-        (async () => {
-            await Crypto.prepareSyncCryptoWorker();
-        })().then(done, done.fail);
-    });
-
     it('creates valid blocks', (done) => {
         (async () => {
             const testBlockchain = await TestBlockchain.createVolatileTest(5, 10);
@@ -49,7 +43,7 @@ describe('Miner', () => {
         })().then(done, done.fail);
     });
 
-    it('can mine a block', (done) => {
+    xit('can mine a block', (done) => {
         if (typeof WebAssembly === 'undefined') {
             // Do not run this test without WASM.
             done();

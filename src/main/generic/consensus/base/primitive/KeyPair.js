@@ -1,35 +1,42 @@
-class KeyPair extends Primitive {
+class KeyPair extends Serializable {
     /**
-     * @param arg
+     * @param {PrivateKey} privateKey
+     * @param {PublicKey} publicKey
      * @param {boolean} locked
      * @param {Uint8Array} lockSalt
      * @private
      */
-    constructor(arg, locked = false, lockSalt = null) {
-        super(arg, Crypto.keyPairType);
+    constructor(privateKey, publicKey, locked = false, lockSalt = null) {
+        if (!(privateKey instanceof Object)) throw new Error('Primitive: Invalid type');
+        if (!(publicKey instanceof Object)) throw new Error('Primitive: Invalid type');
+        super();
+
         /** @type {boolean} */
         this._locked = locked;
         /** @type {boolean} */
         this._lockedInternally = locked;
         /** @type {Uint8Array} */
         this._lockSalt = lockSalt;
+        /** @type {PublicKey} */
+        this._publicKey = publicKey;
         /** @type {PrivateKey} */
-        this._internalPrivateKey = new PrivateKey(Crypto.keyPairPrivate(this._obj));
+        this._internalPrivateKey = new PrivateKey(privateKey.serialize());
     }
 
     /**
      * @return {KeyPair}
      */
     static generate() {
-        return new KeyPair(Crypto.keyPairGenerate());
+        const privateKey = PrivateKey.generate();
+        return new KeyPair(privateKey, PublicKey.derive(privateKey));
     }
 
     /**
      * @param {PrivateKey} privateKey
      * @return {KeyPair}
      */
-    static fromPrivateKey(privateKey) {
-        return new KeyPair(Crypto.keyPairDerive(privateKey._obj));
+    static derive(privateKey) {
+        return new KeyPair(privateKey, PublicKey.derive(privateKey));
     }
 
     /**
@@ -47,12 +54,17 @@ class KeyPair extends Primitive {
      * @return {Promise<KeyPair>}
      */
     static async fromEncrypted(buf, key) {
+        const type = buf.readUint8();
+        if (type !== 1) throw new Error('Unsupported type');
+        const roundsLog = buf.readUint8();
+        if (roundsLog > 32) throw new Error('Rounds out-of-bounds');
+        const rounds = Math.pow(2, roundsLog);
         const encryptedKey = PrivateKey.unserialize(buf);
         const salt = buf.read(KeyPair.EXPORT_SALT_LENGTH);
         const check = buf.read(KeyPair.EXPORT_CHECKSUM_LENGTH);
 
-        const privateKey = new PrivateKey(await KeyPair._otpKdf(encryptedKey.serialize(), key, salt, KeyPair.EXPORT_KDF_ROUNDS));
-        const keyPair = KeyPair.fromPrivateKey(privateKey);
+        const privateKey = new PrivateKey(await KeyPair._otpKdf(encryptedKey.serialize(), key, salt, rounds));
+        const keyPair = KeyPair.derive(privateKey);
         const pubHash = keyPair.publicKey.hash();
         if (!BufferUtils.equals(pubHash.subarray(0, 4), check)) {
             throw new Error('Invalid key');
@@ -76,7 +88,7 @@ class KeyPair extends Primitive {
                 lockSalt = buf.read(32);
             }
         }
-        return new KeyPair(Crypto.keyPairFromKeys(privateKey._obj, publicKey._obj), locked, lockSalt);
+        return new KeyPair(privateKey, publicKey, locked, lockSalt);
     }
 
     /**
@@ -118,7 +130,7 @@ class KeyPair extends Primitive {
 
     /** @type {PublicKey} */
     get publicKey() {
-        return this._publicKey || (this._publicKey = new PublicKey(Crypto.keyPairPublic(this._obj)));
+        return this._publicKey || (this._publicKey = new PublicKey(this._obj.publicKey));
     }
 
     /** @type {number} */
@@ -142,9 +154,11 @@ class KeyPair extends Primitive {
         }
 
         const salt = new Uint8Array(KeyPair.EXPORT_SALT_LENGTH);
-        Crypto.lib.getRandomValues(salt);
+        CryptoWorker.lib.getRandomValues(salt);
 
         const buf = new SerialBuffer(this.encryptedSize);
+        buf.writeUint8(1); // Argon2 KDF
+        buf.writeUint8(Math.log2(KeyPair.EXPORT_KDF_ROUNDS));
         buf.write(await KeyPair._otpKdf(this.privateKey.serialize(), key, salt, KeyPair.EXPORT_KDF_ROUNDS));
         buf.write(salt);
         buf.write(this.publicKey.hash().subarray(0, KeyPair.EXPORT_CHECKSUM_LENGTH));
@@ -156,7 +170,7 @@ class KeyPair extends Primitive {
 
     /** @type {number} */
     get encryptedSize() {
-        return this.privateKey.serializedSize + KeyPair.EXPORT_SALT_LENGTH + KeyPair.EXPORT_CHECKSUM_LENGTH;
+        return 2 + this.privateKey.serializedSize + KeyPair.EXPORT_SALT_LENGTH + KeyPair.EXPORT_CHECKSUM_LENGTH;
     }
 
     /**
@@ -169,7 +183,7 @@ class KeyPair extends Primitive {
         if (lockSalt) this._lockSalt = lockSalt;
         if (!this._lockSalt || this._lockSalt.length === 0) {
             this._lockSalt = new Uint8Array(32);
-            Crypto.lib.getRandomValues(this._lockSalt);
+            CryptoWorker.lib.getRandomValues(this._lockSalt);
         }
 
         this._internalPrivateKey.overwrite(await this._otpPrivateKey(key));
@@ -233,7 +247,7 @@ class KeyPair extends Primitive {
      * @private
      */
     static async _otpKdf(message, key, salt, iterations) {
-        return BufferUtils.xor(message, await Crypto.kdf(key, salt, iterations));
+        return BufferUtils.xor(message, await (await CryptoWorker.getInstanceAsync()).kdf(key, salt, iterations));
     }
 
     get isLocked() {
@@ -241,7 +255,7 @@ class KeyPair extends Primitive {
     }
 
     /**
-     * @param {Primitive} o
+     * @param {Serializable} o
      * @return {boolean}
      */
     equals(o) {

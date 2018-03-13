@@ -79,8 +79,29 @@ class Block {
      * @returns {Promise.<boolean>}
      */
     async verify(time) {
+        if (this._valid === undefined) {
+            if (this.isLight() || this.body.transactions.length < 150 || !IWorker.areWorkersAsync) {
+                // worker overhead doesn't pay off for small transaction numbers
+                this._valid = await this._verify(time.now());
+            } else {
+                const transactionValid = this.body.transactions.map(t => t._valid);
+                const {valid, pow, interlinkHash, bodyHash} = await (await CryptoWorker.getInstanceAsync()).blockVerify(this.serialize(), transactionValid, time.now(), Block.GENESIS.HASH.serialize());
+                this._valid = valid;
+                this.header._pow = Hash.unserialize(new SerialBuffer(pow));
+                this.interlink._hash = Hash.unserialize(new SerialBuffer(interlinkHash));
+                this.body._hash = Hash.unserialize(new SerialBuffer(bodyHash));
+            }
+        }
+        return this._valid;
+    }
+
+    /**
+     * @param {number} timeNow
+     * @returns {Promise.<boolean>}
+     */
+    async _verify(timeNow) {
         // Check that the timestamp is not too far into the future.
-        if (this._header.timestamp * 1000 > time.now() + Block.TIMESTAMP_DRIFT_MAX * 1000) {
+        if (this._header.timestamp * 1000 > timeNow + Block.TIMESTAMP_DRIFT_MAX * 1000) {
             Log.w(Block, 'Invalid block - timestamp too far in the future');
             return false;
         }
@@ -488,14 +509,6 @@ class Block {
      * @param {SerialBuffer} [buf]
      * @returns {Promise.<Hash>}
      */
-    hashAsync(buf) {
-        return this._header.hashAsync(buf);
-    }
-
-    /**
-     * @param {SerialBuffer} [buf]
-     * @returns {Promise.<Hash>}
-     */
     pow(buf) {
         return this._header.pow(buf);
     }
@@ -503,20 +516,3 @@ class Block {
 }
 Block.TIMESTAMP_DRIFT_MAX = 600 /* seconds */; // 10 minutes
 Class.register(Block);
-
-/* Genesis Block */
-Block.GENESIS = new Block(
-    new BlockHeader(
-        new Hash(null),
-        new Hash(null),
-        Hash.fromBase64('z2Qp5kzePlvq/ABN31K1eUAQ5Dn8rpeZQU0PTQn9pH0='),
-        Hash.fromBase64('jIdIsQkjXmPKtb0RM6sYZ6Tfq/Y7DPxEirBKYOhtH7k='),
-        BlockUtils.difficultyToCompact(1),
-        1,
-        0,
-        313530,
-        BlockHeader.Version.V1),
-    new BlockInterlink([], new Hash(null)),
-    new BlockBody(Address.fromBase64('9KzhefhVmhN0pOSnzcIYnlVOTs0='), [])
-);
-Block.GENESIS.HASH = Hash.fromBase64('90SfoDkkc0+taLwtyuEM/Q2J4jvN24xmVnMr7ywaT4k=');

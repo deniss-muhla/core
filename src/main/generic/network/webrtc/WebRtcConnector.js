@@ -26,7 +26,6 @@ class WebRtcConnector extends Observable {
 
         const peerId = peerAddress.peerId;
         if (this._connectors.contains(peerId)) {
-            Log.w(WebRtcConnector, `WebRtc: Already connecting/connected to ${peerId}`);
             return false;
         }
 
@@ -84,21 +83,31 @@ class WebRtcConnector extends Observable {
             // simultaneously. Resolve this by having the peer with the higher
             // peerId discard the offer while the one with the lower peerId
             // accepts it.
-            if (this._connectors.contains(msg.senderId)) {
-                if (msg.recipientId.compare(msg.senderId) === 1) {
+            /** @type {PeerConnector} */
+            let connector = this._connectors.get(msg.senderId);
+            if (connector) {
+                if (msg.recipientId.compare(msg.senderId) > 0) {
                     // Discard the offer.
                     Log.d(WebRtcConnector, `Simultaneous connection, discarding offer from ${msg.senderId} (<${msg.recipientId})`);
                     return;
+                } else if (connector instanceof InboundPeerConnector) {
+                    // We have already seen an offer from this peer. Forward it to the existing connector.
+                    Log.w(WebRtcConnector, `Duplicate offer received from ${msg.senderId}`);
+                    connector.onSignal(payload);
+                    return;
                 } else {
                     // We are going to accept the offer. Clear the connect timeout
-                    // from our previous Outbound connection attempt to this peer.
+                    // from our previous outbound connection attempt to this peer.
                     Log.d(WebRtcConnector, `Simultaneous connection, accepting offer from ${msg.senderId} (>${msg.recipientId})`);
                     this._timers.clearTimeout(`connect_${msg.senderId}`);
+
+                    // XXX Abort the outbound connection attempt.
+                    this.fire('error', connector.peerAddress, 'simultaneous inbound connection');
                 }
             }
 
             // Accept the offer.
-            const connector = new InboundPeerConnector(this._networkConfig, channel, msg.senderId, payload);
+            connector = new InboundPeerConnector(this._networkConfig, channel, msg.senderId, payload);
             connector.on('connection', conn => this._onConnection(conn, msg.senderId));
             this._connectors.put(msg.senderId, connector);
 
@@ -255,7 +264,7 @@ class PeerConnector extends Observable {
             Log.w(PeerConnector, 'No ICE candidate seen for inbound connection');
         }
 
-        const conn = new PeerConnection(channel, Protocol.RTC, netAddress, this._peerAddress);
+        const conn = new NetworkConnection(channel, Protocol.RTC, netAddress, this._peerAddress);
         this.fire('connection', conn);
     }
 

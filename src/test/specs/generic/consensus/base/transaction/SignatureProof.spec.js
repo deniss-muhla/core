@@ -1,4 +1,5 @@
 describe('SignatureProof', () => {
+
     it('can create and verify a signature proof', () => {
         const data = BufferUtils.fromAscii('test message');
         const keyPair = KeyPair.generate();

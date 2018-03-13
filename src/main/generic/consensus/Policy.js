@@ -88,15 +88,6 @@ class Policy {
         const remainder = remaining % Policy.EMISSION_SPEED;
         return (remaining - remainder) / Policy.EMISSION_SPEED;
     }
-
-    /**
-     * The highest (easiest) block PoW target.
-     * @type {number}
-     * @constant
-     */
-    static get BLOCK_TARGET_MAX() {
-        return BlockUtils.compactToTarget(0x1f00ffff); // 16 zero bits, bitcoin uses 32 (0x1d00ffff)
-    }
 }
 
 /**
@@ -112,6 +103,13 @@ Policy.BLOCK_TIME = 60;
  * @constant
  */
 Policy.BLOCK_SIZE_MAX = 1e6; // 1 MB
+
+/**
+ * The highest (easiest) block PoW target.
+ * @type {number}
+ * @constant
+ */
+Policy.BLOCK_TARGET_MAX = Math.pow(2, 240);
 
 /**
  * Number of blocks we take into account to calculate next difficulty.
@@ -157,7 +155,7 @@ Policy.TOTAL_SUPPLY = 21e14;
  * @type {number}
  * @constant
  */
-Policy.INITIAL_SUPPLY = 0;
+Policy.INITIAL_SUPPLY = 252000000000000;
 
 /**
  * Emission speed.

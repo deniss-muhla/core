@@ -57,12 +57,17 @@ class NetworkConfig {
      * @returns {void}
      */
     async _init(db) {
+        if (this._keyPair) {
+            return;
+        }
+
         /** @type {KeyPair} */
         let keys = await db.get('keys');
         if (!keys) {
             keys = KeyPair.generate();
             await db.put('keys', keys);
         }
+
         this._keyPair = keys;
         this._peerId = keys.publicKey.toPeerId();
     }
@@ -170,6 +175,10 @@ class WsNetworkConfig extends NetworkConfig {
             this._services.provided, Date.now(), NetAddress.UNSPECIFIED,
             this.publicKey, /*distance*/ 0,
             this._host, this._port);
+
+        if (!peerAddress.globallyReachable()) {
+            throw 'PeerAddress not globally reachable.';
+        }
         peerAddress.signature = Signature.create(this._keyPair.privateKey, this.publicKey, peerAddress.serializeContent());
         return peerAddress;
     }

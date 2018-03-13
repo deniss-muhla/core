@@ -57,7 +57,7 @@ class NanoChain extends BaseChain {
                 toDo.push(header);
             }
         }
-        await Crypto.manyPow(toDo);
+        await BaseChain.manyPow(toDo);
 
         // Verify all prefix blocks that we don't know yet.
         for (let i = 0; i < proof.prefix.length; i++) {
@@ -181,6 +181,11 @@ class NanoChain extends BaseChain {
         }
     }
 
+    /**
+     * @param {Block} block
+     * @returns {Promise.<number>}
+     * @private
+     */
     async _pushBlock(block) {
         // Check if we already know this header/block.
         const hash = await block.hash();

@@ -1,4 +1,5 @@
 describe('TransactionStoreEntry', () => {
+
     it('correctly constructs transactions from block', (done) => {
         (async () => {
             const blockchain = await TestBlockchain.createVolatileTest(0);

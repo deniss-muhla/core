@@ -102,6 +102,17 @@ class Transaction {
      * @returns {boolean}
      */
     verify() {
+        if (this._valid === undefined) {
+            this._valid = this._verify();
+        }
+        return this._valid;
+    }
+
+    /**
+     * @returns {boolean}
+     * @private
+     */
+    _verify() {
         // Check that sender != recipient.
         if (this._recipient.equals(this._sender)) {
             Log.w(Transaction, 'Sender and recipient must not match', this);
@@ -145,15 +156,6 @@ class Transaction {
     }
 
     /**
-     * @return {Promise.<Hash>}
-     */
-    async hashAsync() {
-        // Exclude the signature, we don't want transactions to be malleable.
-        this._hash = this._hash || await Hash.lightAsync(this.serializeContent());
-        return this._hash;
-    }
-
-    /**
      * @param {Transaction} o
      * @return {number}
      */
@@ -191,7 +193,7 @@ class Transaction {
         if (this._senderType > o._senderType) return 1;
         if (this._flags < o._flags) return -1;
         if (this._flags > o._flags) return 1;
-        return 0;
+        return BufferUtils.compare(this._data, o._data);
     }
 
     /**
@@ -264,6 +266,11 @@ class Transaction {
     /** @type {number} */
     get fee() {
         return this._fee;
+    }
+
+    /** @type {number} */
+    get feePerByte() {
+        return this._fee / this.serializedSize;
     }
 
     /** @type {number} */

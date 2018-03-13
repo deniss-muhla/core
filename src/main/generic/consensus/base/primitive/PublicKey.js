@@ -1,4 +1,4 @@
-class PublicKey extends Primitive {
+class PublicKey extends Serializable {
     /**
      * @param {PublicKey} o
      * @returns {PublicKey}
@@ -9,11 +9,14 @@ class PublicKey extends Primitive {
     }
 
     /**
-     * @param arg
+     * @param {Uint8Array} arg
      * @private
      */
     constructor(arg) {
-        super(arg, Crypto.publicKeyType, Crypto.publicKeySize);
+        super();
+        if (!(arg instanceof Uint8Array)) throw new Error('Primitive: Invalid type');
+        if (arg.length !== PublicKey.SIZE) throw new Error('Primitive: Invalid length');
+        this._obj = arg;
     }
 
     /**
@@ -21,7 +24,7 @@ class PublicKey extends Primitive {
      * @return {PublicKey}
      */
     static derive(privateKey) {
-        return new PublicKey(Crypto.publicKeyDerive(privateKey._obj));
+        return new PublicKey(PublicKey._publicKeyDerive(privateKey._obj));
     }
 
     /**
@@ -29,7 +32,9 @@ class PublicKey extends Primitive {
      * @return {PublicKey}
      */
     static sum(publicKeys) {
-        return new PublicKey(Crypto.delinearizeAndAggregatePublicKeys(publicKeys.map(key => key._obj)));
+        publicKeys = publicKeys.slice();
+        publicKeys.sort((a, b) => a.compare(b));
+        return PublicKey._delinearizeAndAggregatePublicKeys(publicKeys);
     }
 
     /**
@@ -37,7 +42,7 @@ class PublicKey extends Primitive {
      * @return {PublicKey}
      */
     static unserialize(buf) {
-        return new PublicKey(Crypto.publicKeyUnserialize(buf.read(Crypto.publicKeySize)));
+        return new PublicKey(buf.read(PublicKey.SIZE));
     }
 
     /**
@@ -46,17 +51,17 @@ class PublicKey extends Primitive {
      */
     serialize(buf) {
         buf = buf || new SerialBuffer(this.serializedSize);
-        buf.write(Crypto.publicKeySerialize(this._obj));
+        buf.write(this._obj);
         return buf;
     }
 
     /** @type {number} */
     get serializedSize() {
-        return Crypto.publicKeySize;
+        return PublicKey.SIZE;
     }
 
     /**
-     * @param {Primitive} o
+     * @param {Serializable} o
      * @return {boolean}
      */
     equals(o) {
@@ -68,13 +73,6 @@ class PublicKey extends Primitive {
      */
     hash() {
         return Hash.light(this.serialize());
-    }
-
-    /**
-     * @return {Promise.<Hash>}
-     */
-    hashAsync() {
-        return Hash.lightAsync(this.serialize());
     }
 
     /**
@@ -98,6 +96,144 @@ class PublicKey extends Primitive {
     toPeerId() {
         return new PeerId(this.hash().subarray(0, 16));
     }
+
+    /**
+     * @param {Array.<PublicKey>} publicKeys
+     * @returns {PublicKey}
+     */
+    static _delinearizeAndAggregatePublicKeys(publicKeys) {
+        const publicKeysObj = publicKeys.map(k => k.serialize());
+        const publicKeysHash = PublicKey._publicKeysHash(publicKeysObj);
+        const raw = PublicKey._publicKeysDelinearizeAndAggregate(publicKeysObj, publicKeysHash);
+        return new PublicKey(raw);
+    }
+
+    /**
+     * @param {Uint8Array} privateKey
+     * @returns {Uint8Array}
+     */
+    static _publicKeyDerive(privateKey) {
+        if (privateKey.byteLength !== PrivateKey.SIZE) {
+            throw Error('Wrong buffer size.');
+        }
+        let stackPtr;
+        try {
+            const wasmOut = Module.stackAlloc(Hash.getSize(Hash.Algorithm.SHA256));
+            const pubKeyBuffer = new Uint8Array(Module.HEAP8.buffer, wasmOut, PrivateKey.SIZE);
+            pubKeyBuffer.set(privateKey);
+            const wasmIn = Module.stackAlloc(privateKey.length);
+            const privKeyBuffer = new Uint8Array(Module.HEAP8.buffer, wasmIn, PrivateKey.SIZE);
+            privKeyBuffer.set(privateKey);
+
+            Module._ed25519_public_key_derive(wasmOut, wasmIn);
+            privKeyBuffer.fill(0);
+            const publicKey = new Uint8Array(PublicKey.SIZE);
+            publicKey.set(pubKeyBuffer);
+            return publicKey;
+        } catch (e) {
+            Log.w(PublicKey, e);
+            throw e;
+        } finally {
+            if (stackPtr !== undefined) Module.stackRestore(stackPtr);
+        }
+    }
+
+    /**
+     * @param {Array.<Uint8Array>} publicKeys
+     * @returns {Uint8Array}
+     */
+    static _publicKeysHash(publicKeys) {
+        if (publicKeys.some(publicKey => publicKey.byteLength !== PublicKey.SIZE)) {
+            throw Error('Wrong buffer size.');
+        }
+        const concatenatedPublicKeys = new Uint8Array(publicKeys.length * PublicKey.SIZE);
+        for (let i = 0; i < publicKeys.length; ++i) {
+            concatenatedPublicKeys.set(publicKeys[i], i * PublicKey.SIZE);
+        }
+        let stackPtr;
+        try {
+            stackPtr = Module.stackSave();
+            const hashSize = Hash.getSize(Hash.Algorithm.SHA512);
+            const wasmOut = Module.stackAlloc(hashSize);
+            const wasmInPublicKeys = Module.stackAlloc(concatenatedPublicKeys.length);
+            new Uint8Array(Module.HEAPU8.buffer, wasmInPublicKeys, concatenatedPublicKeys.length).set(concatenatedPublicKeys);
+            Module._ed25519_hash_public_keys(wasmOut, wasmInPublicKeys, publicKeys.length);
+            const hashedPublicKey = new Uint8Array(hashSize);
+            hashedPublicKey.set(new Uint8Array(Module.HEAPU8.buffer, wasmOut, hashSize));
+            return hashedPublicKey;
+        } catch (e) {
+            Log.w(PublicKey, e);
+            throw e;
+        } finally {
+            if (stackPtr !== undefined) Module.stackRestore(stackPtr);
+        }
+    }
+
+    /**
+     * @param {Uint8Array} publicKey
+     * @param {Uint8Array} publicKeysHash
+     * @returns {Uint8Array}
+     */
+    static _publicKeyDelinearize(publicKey, publicKeysHash) {
+        if (publicKey.byteLength !== PublicKey.SIZE
+            || publicKeysHash.byteLength !== Hash.getSize(Hash.Algorithm.SHA512)) {
+            throw Error('Wrong buffer size.');
+        }
+        let stackPtr;
+        try {
+            stackPtr = Module.stackSave();
+            const wasmOut = Module.stackAlloc(PublicKey.SIZE);
+            const wasmInPublicKey = Module.stackAlloc(publicKey.length);
+            const wasmInPublicKeysHash = Module.stackAlloc(publicKeysHash.length);
+            new Uint8Array(Module.HEAPU8.buffer, wasmInPublicKey, publicKey.length).set(publicKey);
+            new Uint8Array(Module.HEAPU8.buffer, wasmInPublicKeysHash, publicKeysHash.length).set(publicKeysHash);
+            Module._ed25519_delinearize_public_key(wasmOut, wasmInPublicKeysHash, wasmInPublicKey);
+            const delinearizedPublicKey = new Uint8Array(PublicKey.SIZE);
+            delinearizedPublicKey.set(new Uint8Array(Module.HEAPU8.buffer, wasmOut, PublicKey.SIZE));
+            return delinearizedPublicKey;
+        } catch (e) {
+            Log.w(PublicKey, e);
+            throw e;
+        } finally {
+            if (stackPtr !== undefined) Module.stackRestore(stackPtr);
+        }
+    }
+
+    /**
+     * @param {Array.<Uint8Array>} publicKeys
+     * @param {Uint8Array} publicKeysHash
+     * @returns {Uint8Array}
+     */
+    static _publicKeysDelinearizeAndAggregate(publicKeys, publicKeysHash) {
+        if (publicKeys.some(publicKey => publicKey.byteLength !== PublicKey.SIZE)
+            || publicKeysHash.byteLength !== Hash.getSize(Hash.Algorithm.SHA512)) {
+            throw Error('Wrong buffer size.');
+        }
+        const concatenatedPublicKeys = new Uint8Array(publicKeys.length * PublicKey.SIZE);
+        for (let i = 0; i < publicKeys.length; ++i) {
+            concatenatedPublicKeys.set(publicKeys[i], i * PublicKey.SIZE);
+        }
+        let stackPtr;
+        try {
+            stackPtr = Module.stackSave();
+            const wasmOut = Module.stackAlloc(PublicKey.SIZE);
+            const wasmInPublicKeys = Module.stackAlloc(concatenatedPublicKeys.length);
+            const wasmInPublicKeysHash = Module.stackAlloc(publicKeysHash.length);
+            new Uint8Array(Module.HEAPU8.buffer, wasmInPublicKeys, concatenatedPublicKeys.length).set(concatenatedPublicKeys);
+            new Uint8Array(Module.HEAPU8.buffer, wasmInPublicKeysHash, publicKeysHash.length).set(publicKeysHash);
+            Module._ed25519_aggregate_delinearized_public_keys(wasmOut, wasmInPublicKeysHash, wasmInPublicKeys, publicKeys.length);
+            const aggregatePublicKey = new Uint8Array(PublicKey.SIZE);
+            aggregatePublicKey.set(new Uint8Array(Module.HEAPU8.buffer, wasmOut, PublicKey.SIZE));
+            return aggregatePublicKey;
+        } catch (e) {
+            Log.w(PublicKey, e);
+            throw e;
+        } finally {
+            if (stackPtr !== undefined) Module.stackRestore(stackPtr);
+        }
+    }
 }
+
+PublicKey.SIZE = 32;
 
 Class.register(PublicKey);

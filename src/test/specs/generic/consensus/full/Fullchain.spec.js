@@ -1,7 +1,6 @@
 describe('Blockchain', () => {
     it('verifies block size limit', (done) => {
         (async function () {
-            await Crypto.prepareSyncCryptoWorker();
             const testBlockchain = await TestBlockchain.createVolatileTest(0, 1);
             const sender = testBlockchain.users[0];
             const numTransactions = 8000;
@@ -26,7 +25,7 @@ describe('Blockchain', () => {
     it('rejects orphan blocks', (done) => {
         (async function () {
             const testBlockchain = await TestBlockchain.createVolatileTest(0);
-            const zeroHash = new Hash(new Uint8Array(Crypto.hashSize));
+            const zeroHash = new Hash(new Uint8Array(Hash.SIZE.get(Hash.Algorithm.BLAKE2B)));
 
             // Try to push a block with an invalid prevHash and check that it fails
             // hash that does NOT match the one from Genesis
@@ -67,7 +66,7 @@ describe('Blockchain', () => {
     it('verifies block body hash', (done) => {
         (async function () {
             const testBlockchain = await TestBlockchain.createVolatileTest(0);
-            const zeroHash = new Hash(new Uint8Array(Crypto.hashSize));
+            const zeroHash = new Hash(new Uint8Array(Hash.SIZE.get(Hash.Algorithm.BLAKE2B)));
 
             // Now try to push a block with an invalid body hash
             const block = await testBlockchain.createBlock({bodyHash: zeroHash});
@@ -79,7 +78,7 @@ describe('Blockchain', () => {
     it('verifies accounts hash', (done) => {
         (async function () {
             const testBlockchain = await TestBlockchain.createVolatileTest(0);
-            const zeroHash = new Hash(new Uint8Array(Crypto.hashSize));
+            const zeroHash = new Hash(new Uint8Array(Hash.SIZE.get(Hash.Algorithm.BLAKE2B)));
 
             // Try to push a block that has an invalid AccountsHash
             const block = await testBlockchain.createBlock({accountsHash: zeroHash});
@@ -104,6 +103,31 @@ describe('Blockchain', () => {
         })().then(done, done.fail);
     });
 
+    it('verifies transaction signatures in large blocks', (done) => {
+        (async function () {
+            const testBlockchain = await TestBlockchain.createVolatileTest(0, 2);
+            const sender = testBlockchain.users[0];
+            const receiver = testBlockchain.users[1];
+            const numTransactions = 1000;
+
+            const transactions = [];
+            for (let i = 0; i < numTransactions; i++) {
+                const recipient = Address.fromHash(Hash.blake2b(BufferUtils.fromAscii(`tx${i}`)));
+                transactions.push(TestBlockchain.createTransaction(sender.publicKey, recipient, 1, 1, 1, sender.privateKey));
+            }
+
+            // Now try to push a block with an invalid transaction signature
+            const data = new Uint8Array(32);
+            const wrongSignature = Signature.create(testBlockchain.users[0].privateKey, testBlockchain.users[0].publicKey, data);
+            transactions.push(TestBlockchain.createTransaction(sender.publicKey, receiver.address, 1, 1, 0, undefined, wrongSignature));
+            transactions.sort((a, b) => a.compareBlockOrder(b));
+
+            const block = await testBlockchain.createBlock({transactions: transactions});
+            const status = await testBlockchain.pushBlock(block);
+            expect(status).toBe(FullChain.ERR_INVALID);
+        })().then(done, done.fail);
+    });
+
     it('verifies that sufficient funds are available', (done) => {
         (async function () {
             const testBlockchain = await TestBlockchain.createVolatileTest(0, 2);
@@ -119,7 +143,7 @@ describe('Blockchain', () => {
         })().then(done, done.fail);
     });
 
-    it('verifies transaction nonce', (done) => {
+    it('verifies transaction validityStartHeight', (done) => {
         (async function () {
             const testBlockchain = await TestBlockchain.createVolatileTest(0, 2);
             const senderPubKey = testBlockchain.users[0].publicKey;
@@ -262,7 +286,7 @@ describe('Blockchain', () => {
             }
 
             nextTarget = await testBlockchain.getNextTarget();
-            expect(BlockUtils.targetToCompact(nextTarget)).toBe(BlockUtils.difficultyToCompact(1.0930698023517638));
+            expect(BlockUtils.targetToCompact(nextTarget)).toBe(520153652); // TODO
         })().then(done, done.fail);
     });
 
@@ -290,7 +314,7 @@ describe('Blockchain', () => {
             }
 
             nextTarget = await testBlockchain.getNextTarget();
-            expect(BlockUtils.targetToCompact(nextTarget)).toBe(BlockUtils.difficultyToCompact(1.098953617064091));
+            expect(BlockUtils.targetToCompact(nextTarget)).toBe(520153331); // TODO
         })().then(done, done.fail);
     });
 

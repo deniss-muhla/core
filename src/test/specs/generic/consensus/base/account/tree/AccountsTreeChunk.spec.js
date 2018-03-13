@@ -1,4 +1,5 @@
 describe('AccountsTreeChunk', () => {
+
     it('is correctly created', (done) => {
         (async () => {
             const accountsTree = await AccountsTree.createVolatile();

@@ -2,7 +2,6 @@ describe('AccountsProofMessage', () => {
     const blockHash = Hash.fromBase64(Dummy.hash1);
     let proof;
 
-
     beforeAll(() => {
         const account1 = new BasicAccount(25);
         const account2 = new BasicAccount(1);

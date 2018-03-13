@@ -2,10 +2,6 @@ describe('HashedTimeLockedContract', () => {
     const recipient = Address.unserialize(BufferUtils.fromBase64(Dummy.address1));
     const sender = Address.unserialize(BufferUtils.fromBase64(Dummy.address2));
 
-    beforeAll((done) => {
-        Crypto.prepareSyncCryptoWorker().then(done, done.fail);
-    });
-
     it('can serialize and unserialize itself', () => {
         const account = new HashedTimeLockedContract(1000, sender, recipient, Hash.NULL, 42, 1000, 800);
         const account2 = /** @type {HashedTimeLockedContract} */ Account.unserialize(account.serialize());
@@ -40,7 +36,7 @@ describe('HashedTimeLockedContract', () => {
             expect(await HashedTimeLockedContract.verifyIncomingTransaction(transaction)).toBeFalsy();
 
             // Data too long
-            let data = new SerialBuffer(Address.SERIALIZED_SIZE * 2 + Crypto.blake2bSize + 6 + 4711);
+            let data = new SerialBuffer(Address.SERIALIZED_SIZE * 2 + Hash.SIZE.get(Hash.Algorithm.BLAKE2B) + 6 + 4711);
             sender.serialize(data);
             recipient.serialize(data);
             data.writeUint8(Hash.Algorithm.BLAKE2B);
@@ -51,7 +47,7 @@ describe('HashedTimeLockedContract', () => {
             expect(await HashedTimeLockedContract.verifyIncomingTransaction(transaction)).toBeFalsy();
 
             // Invalid hash type
-            data = new SerialBuffer(Address.SERIALIZED_SIZE * 2 + Crypto.blake2bSize + 6);
+            data = new SerialBuffer(Address.SERIALIZED_SIZE * 2 + Hash.SIZE.get(Hash.Algorithm.BLAKE2B) + 6);
             sender.serialize(data);
             recipient.serialize(data);
             data.writeUint8(251);
@@ -62,7 +58,7 @@ describe('HashedTimeLockedContract', () => {
             expect(await HashedTimeLockedContract.verifyIncomingTransaction(transaction)).toBeFalsy();
 
             // Invalid contract address
-            data = new SerialBuffer(Address.SERIALIZED_SIZE * 2 + Crypto.blake2bSize + 6);
+            data = new SerialBuffer(Address.SERIALIZED_SIZE * 2 + Hash.SIZE.get(Hash.Algorithm.BLAKE2B) + 6);
             sender.serialize(data);
             recipient.serialize(data);
             data.writeUint8(Hash.Algorithm.BLAKE2B);
@@ -96,7 +92,7 @@ describe('HashedTimeLockedContract', () => {
             expect(await HashedTimeLockedContract.verifyOutgoingTransaction(transaction)).toBeFalsy();
 
             // Proof too long
-            proof = new SerialBuffer(3 + 2 * Crypto.blake2bSize + signatureProof.serializedSize + 4711);
+            proof = new SerialBuffer(3 + 2 * Hash.SIZE.get(Hash.Algorithm.BLAKE2B) + signatureProof.serializedSize + 4711);
             proof.writeUint8(HashedTimeLockedContract.ProofType.REGULAR_TRANSFER);
             proof.writeUint8(Hash.Algorithm.BLAKE2B);
             proof.writeUint8(1);
@@ -113,7 +109,7 @@ describe('HashedTimeLockedContract', () => {
             expect(await HashedTimeLockedContract.verifyOutgoingTransaction(transaction)).toBeFalsy();
 
             // regular: invalid pre-image
-            proof = new SerialBuffer(3 + 2 * Crypto.blake2bSize + signatureProof.serializedSize);
+            proof = new SerialBuffer(3 + 2 * Hash.SIZE.get(Hash.Algorithm.BLAKE2B) + signatureProof.serializedSize);
             proof.writeUint8(HashedTimeLockedContract.ProofType.REGULAR_TRANSFER);
             proof.writeUint8(Hash.Algorithm.BLAKE2B);
             proof.writeUint8(1);
@@ -124,7 +120,7 @@ describe('HashedTimeLockedContract', () => {
             expect(await HashedTimeLockedContract.verifyOutgoingTransaction(transaction)).toBeFalsy();
 
             // regular: invalid signature
-            proof = new SerialBuffer(3 + 2 * Crypto.blake2bSize + signatureProof.serializedSize);
+            proof = new SerialBuffer(3 + 2 * Hash.SIZE.get(Hash.Algorithm.BLAKE2B) + signatureProof.serializedSize);
             proof.writeUint8(HashedTimeLockedContract.ProofType.REGULAR_TRANSFER);
             proof.writeUint8(Hash.Algorithm.BLAKE2B);
             proof.writeUint8(1);
@@ -135,7 +131,7 @@ describe('HashedTimeLockedContract', () => {
             expect(await HashedTimeLockedContract.verifyOutgoingTransaction(transaction)).toBeFalsy();
 
             // regular: invalid hash type
-            proof = new SerialBuffer(3 + 2 * Crypto.blake2bSize + signatureProof.serializedSize);
+            proof = new SerialBuffer(3 + 2 * Hash.SIZE.get(Hash.Algorithm.BLAKE2B) + signatureProof.serializedSize);
             proof.writeUint8(HashedTimeLockedContract.ProofType.REGULAR_TRANSFER);
             proof.writeUint8(251);
             proof.writeUint8(0);
@@ -199,7 +195,7 @@ describe('HashedTimeLockedContract', () => {
             expect(await HashedTimeLockedContract.verifyOutgoingTransaction(transaction)).toBeFalsy();
 
             // regular: mismatch signature
-            proof = new SerialBuffer(3 + 2 * Crypto.blake2bSize + signatureProof.serializedSize);
+            proof = new SerialBuffer(3 + 2 * Hash.SIZE.get(Hash.Algorithm.BLAKE2B) + signatureProof.serializedSize);
             proof.writeUint8(HashedTimeLockedContract.ProofType.REGULAR_TRANSFER);
             proof.writeUint8(Hash.Algorithm.BLAKE2B);
             proof.writeUint8(1);
@@ -220,7 +216,7 @@ describe('HashedTimeLockedContract', () => {
 
             // regular
             const signatureProof = new SignatureProof(keyPair.publicKey, new MerklePath([]), Signature.create(keyPair.privateKey, keyPair.publicKey, transaction.serializeContent()));
-            let proof = new SerialBuffer(3 + 2 * Crypto.blake2bSize + signatureProof.serializedSize);
+            let proof = new SerialBuffer(3 + 2 * Hash.SIZE.get(Hash.Algorithm.BLAKE2B) + signatureProof.serializedSize);
             proof.writeUint8(HashedTimeLockedContract.ProofType.REGULAR_TRANSFER);
             proof.writeUint8(Hash.Algorithm.BLAKE2B);
             proof.writeUint8(1);
@@ -256,7 +252,7 @@ describe('HashedTimeLockedContract', () => {
             const transaction = new ExtendedTransaction(recipient, Account.Type.HTLC, addr, Account.Type.BASIC, 100, 0, 1, Transaction.Flag.NONE, new Uint8Array(0));
             const account = new HashedTimeLockedContract(1000, sender, addr, hashRoot, 1, 1000, 1000);
             const signatureProof = new SignatureProof(keyPair.publicKey, new MerklePath([]), Signature.create(keyPair.privateKey, keyPair.publicKey, transaction.serializeContent()));
-            const proof = new SerialBuffer(3 + 2 * Crypto.blake2bSize + signatureProof.serializedSize);
+            const proof = new SerialBuffer(3 + 2 * Hash.SIZE.get(Hash.Algorithm.BLAKE2B) + signatureProof.serializedSize);
             proof.writeUint8(HashedTimeLockedContract.ProofType.REGULAR_TRANSFER);
             proof.writeUint8(Hash.Algorithm.BLAKE2B);
             proof.writeUint8(1);
@@ -280,7 +276,7 @@ describe('HashedTimeLockedContract', () => {
             const transaction = new ExtendedTransaction(recipient, Account.Type.HTLC, addr, Account.Type.BASIC, 100, 0, 1, Transaction.Flag.NONE, new Uint8Array(0));
             const account = new HashedTimeLockedContract(1000, sender, addr, hashRoot, 1, 1000, 1000);
             const signatureProof = new SignatureProof(keyPair.publicKey, new MerklePath([]), Signature.create(keyPair.privateKey, keyPair.publicKey, transaction.serializeContent()));
-            const proof = new SerialBuffer(3 + 2 * Crypto.blake2bSize + signatureProof.serializedSize);
+            const proof = new SerialBuffer(3 + 2 * Hash.SIZE.get(Hash.Algorithm.BLAKE2B) + signatureProof.serializedSize);
             proof.writeUint8(HashedTimeLockedContract.ProofType.REGULAR_TRANSFER);
             proof.writeUint8(Hash.Algorithm.SHA256);
             proof.writeUint8(1);
@@ -304,7 +300,7 @@ describe('HashedTimeLockedContract', () => {
             const transaction = new ExtendedTransaction(recipient, Account.Type.HTLC, addr, Account.Type.BASIC, 600, 0, 100, Transaction.Flag.NONE, new Uint8Array(0));
             const account = new HashedTimeLockedContract(1000, sender, addr, hashRoot, 2, 1000, 1000);
             const signatureProof = new SignatureProof(keyPair.publicKey, new MerklePath([]), Signature.create(keyPair.privateKey, keyPair.publicKey, transaction.serializeContent()));
-            const proof = new SerialBuffer(3 + 2 * Crypto.blake2bSize + signatureProof.serializedSize);
+            const proof = new SerialBuffer(3 + 2 * Hash.SIZE.get(Hash.Algorithm.BLAKE2B) + signatureProof.serializedSize);
             proof.writeUint8(HashedTimeLockedContract.ProofType.REGULAR_TRANSFER);
             proof.writeUint8(Hash.Algorithm.BLAKE2B);
             proof.writeUint8(1);
@@ -368,7 +364,7 @@ describe('HashedTimeLockedContract', () => {
 
     it('can create contract from transaction', (done) => {
         (async () => {
-            const data = new SerialBuffer(Address.SERIALIZED_SIZE * 2 + Crypto.blake2bSize + 6);
+            const data = new SerialBuffer(Address.SERIALIZED_SIZE * 2 + Hash.SIZE.get(Hash.Algorithm.BLAKE2B) + 6);
             sender.serialize(data);
             recipient.serialize(data);
             data.writeUint8(Hash.Algorithm.BLAKE2B);
